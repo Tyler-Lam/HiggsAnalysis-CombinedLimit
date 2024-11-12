@@ -1261,27 +1261,55 @@ void HybridNew::applyClsQuantile(RooStats::HypoTestResult &hcres) {
 
     /** New test implementation, scales as N*log(N) */
     timer.Start();
-    std::vector<std::pair<double,double> > bcumul; bcumul.reserve(bdist.size());
-    std::vector<std::pair<double,double> > scumul; scumul.reserve(sdist.size());
+
+    // "total" = all events are one entry (not adjusted for multiplicity)
+    std::vector<std::pair<double,double> > bcumul_total; bcumul_total.reserve(bdist.size());
+    std::vector<std::pair<double,double> > scumul_total; scumul_total.reserve(sdist.size());
     double btot = 0, stot = 0;
     for (std::vector<Double_t>::const_iterator it = bdist.begin(), ed = bdist.end(), itw = bweight.begin(); it != ed; ++it, ++itw) {
-        bcumul.push_back(std::pair<double,double>(*it, *itw));
+        bcumul_total.push_back(std::pair<double,double>(*it, *itw));
         btot += *itw;
     }
     for (std::vector<Double_t>::const_iterator it = sdist.begin(), ed = sdist.end(), itw = sweight.begin(); it != ed; ++it, ++itw) {
-        scumul.push_back(std::pair<double,double>(*it, *itw));
+        scumul_total.push_back(std::pair<double,double>(*it, *itw));
         stot += *itw;
     }
     double sinv = 1.0/stot, binv = 1.0/btot, runningSum;
     // now compute integral distribution of Q(s+b data) so that we can quickly compute the CL_{s+b} for all test stats.
-    std::sort(scumul.begin(), scumul.end());
+    std::sort(scumul_total.begin(), scumul_total.end());
     runningSum = 0;
-    for (std::vector<std::pair<double,double> >::reverse_iterator it = scumul.rbegin(), ed = scumul.rend(); it != ed; ++it) {
+    // first make the cdfs, combine degenerate test statistics
+    std::vector<std::pair<double, double> > scumul;
+    for (std::vector<std::pair<double,double> >::reverse_iterator it = scumul_total.rbegin(), ed = scumul_total.rend(); it != ed; ++it) {
         runningSum += it->second;
-        it->second = runningSum * sinv;
+	if (scumul.size() == 0){
+	  scumul.insert(scumul.begin(), std::pair<double, double>(it->first, runningSum * sinv));
+	}
+	else if (scumul.begin()->first == it->first){
+	  scumul.begin()->second = runningSum * sinv;
+	}
+	else{
+	  scumul.insert(scumul.begin(), std::pair<double, double>(it->first, runningSum * sinv));
+	}
+        //it->second = runningSum * sinv;
     }
-    std::sort(bcumul.begin(), bcumul.end());
-    std::vector<std::pair<double,std::pair<double,double> > > xcumul; xcumul.reserve(bdist.size());
+    std::sort(bcumul_total.begin(), bcumul_total.end());
+    // now for the b-only we combine q-values by adding their weights
+    std::vector<std::pair<double, double> > bcumul;
+    for (std::vector<std::pair<double, double> >::reverse_iterator it = bcumul_total.rbegin(), ed = bcumul_total.rend(); it != ed; ++it){
+      if (bcumul.size() == 0){
+	bcumul.insert(bcumul.begin(), std::pair<double, double>(it->first, it->second));
+      }
+      else if (bcumul.begin() -> first == it->first){
+	bcumul.begin()->second += it->second;
+      }
+      else{
+	bcumul.insert(bcumul.begin(), std::pair<double, double>(it->first, it->second));
+      }
+    }
+
+    // the rest is unchanged from before
+    std::vector<std::pair<double,std::pair<double,double> > > xcumul; //xcumul.reserve(bcumul.size());
     runningSum = 0;
     std::vector<std::pair<double,double> >::const_iterator sbegin = scumul.begin(), send = scumul.end();
     //int k = 0;
@@ -1294,10 +1322,12 @@ void HybridNew::applyClsQuantile(RooStats::HypoTestResult &hcres) {
             xcumul.push_back(std::make_pair(CLs_ ? cls : pmu, *it));
         } else {
             double pmu = match->second, pb = runningSum*binv, cls = pmu / pb;
-            //if ((++k) % 100 == 0) printf("At %+8.5f  1-Pb = %6.4f, Pmu = %6.4f, CLs =%7.4f\n", it->first, pb, pmu, cls);
-            xcumul.push_back(std::make_pair(CLs_ ? cls : pmu, *it));
+            //if ((++k) % 10 == 0) printf("At %+8.5f  1-Pb = %6.4f, Pmu = %6.4f (qmu = %8.5f), CLs =%7.4f\n", it->first, pb, pmu, match->first, cls);
+	    xcumul.push_back(std::make_pair(CLs_ ? cls : pmu, *it));
         }
     }
+    
+    
     // sort
     std::sort(xcumul.begin(), xcumul.end());
     // get quantile
@@ -1310,6 +1340,7 @@ void HybridNew::applyClsQuantile(RooStats::HypoTestResult &hcres) {
             break;
         }
     }
+
     //std::cout << "CLs quantile = " << (CLs_ ? hcres.CLs() : hcres.CLsplusb()) << std::endl;
     //std::cout << "Computed quantiles in " << timer.RealTime() << " s" << std::endl;
 #if 0
